@@ -7,7 +7,6 @@ import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
 import { useRouter } from "expo-router";
 import { useVideoPlayer, VideoView } from "expo-video";
-import LottieView from "lottie-react-native";
 import React, { useEffect, useRef, useState } from "react";
 import { Alert, Dimensions, Modal, Platform, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -27,12 +26,11 @@ import {
 // VideoEditor Components
 import VideoEditingTools from "../../components/VideoEditor/VideoEditingTools";
 import VideoTimeline from "../../components/VideoEditor/VideoTimeline";
-import AwsUploadToaster from "../components/VideoEditor/AwsUploadToaster";
 import BottomToolbar from "../components/VideoEditor/BottomToolbar";
 import StickerOverlay from "../components/VideoEditor/StickerOverlay";
 import TextOverlay from "../components/VideoEditor/TextOverlay";
 import TransitionOverlay from "../components/VideoEditor/TransitionOverlay";
-import styles from "./PreviewVideoShoot.styles";
+import styles from "./EditVideo.styles";
 
 // Video Processing
 import * as AudioProcessorModule from "../../utils/audioProcessor";
@@ -41,13 +39,10 @@ const AudioProcessor = (AudioProcessorModule as any).default || AudioProcessorMo
 type AudioMixOptions = any;
 type AudioTrack = any;
 
-// AWS S3 Integration
-import AppConfigManager, { AppConfig } from "../../config/appConfig";
-import AWSS3Service from "../../utils/awsS3Service";
 
 // Enhanced FFmpeg Service
 import FFmpegService from "../../utils/ffmpegService";
-import useAwsUpload from "../hooks/useAwsUpload";
+ 
 
 const BACKGROUND_AUDIO_TRACK_ID = 'background-audio-track';
 
@@ -61,7 +56,7 @@ const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = getScreenDimensions();
 const device = getDeviceType();
 const layout = getResponsiveLayout();
 
-const PreviewVideoShoot = () => {
+const EditVideo = () => {
   const router = useRouter();
   const route = useRoute();
   const insets = useSafeAreaInsets(); // iOS safe area insets
@@ -116,17 +111,10 @@ const PreviewVideoShoot = () => {
     
     checkParams();
   }, [route.params, videoUri, isIOS]);
-  const [isUploaded, setIsUploaded] = useState(false);
-  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  
   const [showDiscardModal, setShowDiscardModal] = useState(false);
   const [isDiscardConfirmed, setIsDiscardConfirmed] = useState(false);
-  const [flaggedForUpload, setFlaggedForUpload] = useState(false);
-  const [uploadStatus, setUploadStatus] = useState<'pending' | 'uploading' | 'completed' | 'failed'>('pending');
-  const [uploadProgress, setUploadProgress] = useState<number>(0);
-  const [lastUploadedUrl, setLastUploadedUrl] = useState<string | null>(null);
   const [currentVideoData, setCurrentVideoData] = useState<any>(null);
-  const [showUploadToaster, setShowUploadToaster] = useState(false);
-  const [config, setConfig] = useState<AppConfig>(AppConfigManager.getConfig());
 
   // Video Editor States
   const [showVideoEditor, setShowVideoEditor] = useState(false);
@@ -261,18 +249,7 @@ const PreviewVideoShoot = () => {
   // UI state for split slider to let the editor remember selection across openings
   const [uiSplitTime, setUiSplitTime] = useState<number>(0);
 
-  const { toggleUploadFlag, performAwsUpload } = useAwsUpload({
-    videoUri,
-    flaggedForUpload,
-    setFlaggedForUpload,
-    uploadStatus,
-    setUploadStatus,
-    uploadProgress,
-    setUploadProgress,
-    lastUploadedUrl,
-    setLastUploadedUrl,
-    videoMetadata,
-  });
+  
 
   const getFullDuration = () => (videoMetadata?.duration || player?.duration || 0);
 
@@ -977,26 +954,9 @@ const PreviewVideoShoot = () => {
     try {
       // Initialize FFmpeg service
       await FFmpegService.initialize();
-      
-      // Initialize AWS S3 service in test mode for development
-      await AWSS3Service.initializeTestMode();
-      
-      // Load app configuration
-      await AppConfigManager.loadConfig();
-      
-      console.log('All services initialized successfully - AWS S3 ready');
+      console.log('FFmpeg service initialized successfully');
     } catch (error) {
       console.error('Failed to initialize services:', error);
-    }
-  };
-
-  const handleFeatureToggle = async (feature: keyof AppConfig['features'], value: boolean) => {
-    try {
-      await AppConfigManager.updateFeatureFlags({ [feature]: value });
-      setConfig({ ...config, features: { ...config.features, [feature]: value } });
-    } catch (error) {
-      console.error('Failed to update feature flag:', error);
-      Alert.alert('Error', 'Failed to update feature setting');
     }
   };
 
@@ -1055,27 +1015,15 @@ const PreviewVideoShoot = () => {
         const currentVideo = videos.find((video: any) => video.uri === videoUri);
         if (currentVideo) {
           setCurrentVideoData(currentVideo);
-          setFlaggedForUpload(currentVideo.flaggedForUpload || false);
-          setUploadStatus(currentVideo.uploaded ? 'completed' : 'pending');
         } else {
-          // For uploaded videos from gallery that don't exist in saved_videos yet
-          // Set default values and flag for upload
           setCurrentVideoData(null);
-          setFlaggedForUpload(true); // Auto-flag uploaded videos for AWS upload
-          setUploadStatus('pending');
         }
       } else {
-        // No saved videos, but this is an uploaded video from gallery
         setCurrentVideoData(null);
-        setFlaggedForUpload(true); // Auto-flag uploaded videos for AWS upload
-        setUploadStatus('pending');
       }
     } catch (error) {
       console.error('Error loading video data:', error);
-      // Default for uploaded videos
       setCurrentVideoData(null);
-      setFlaggedForUpload(true);
-      setUploadStatus('pending');
     }
   };
 
@@ -1157,81 +1105,7 @@ const PreviewVideoShoot = () => {
    * AWS upload happens separately via cloud icon (handleVideoUploadToggle)
    * Location: Lines 1279-1358
    */
-  const handleApprove = async () => {
-    if (!videoUri) return;
-
-    console.log('💾 Saving video to local storage...');
-    console.log('Current upload status:', uploadStatus);
-    console.log('Flagged for upload:', flaggedForUpload);
-    
-    setIsUploaded(true);
-    const previousUploadStatus = uploadStatus; // Preserve upload status
-
-    try {
-      // Save video metadata to AsyncStorage (local storage only)
-      const savedVideos = await AsyncStorage.getItem('saved_videos');
-      let videos = savedVideos ? JSON.parse(savedVideos) : [];
-      
-      // Check if video already exists in the list
-      const existingVideoIndex = videos.findIndex((video: any) => video.uri === videoUri);
-      
-      if (existingVideoIndex !== -1) {
-        // Update existing video - PRESERVE AWS upload status
-        const existingVideo = videos[existingVideoIndex];
-        videos[existingVideoIndex] = { 
-          ...existingVideo,
-          lastEdited: new Date().toISOString(),
-          duration: videoMetadata?.duration || existingVideo.duration,
-          // IMPORTANT: Keep AWS upload status if already uploaded
-          uploaded: existingVideo.uploaded || (uploadStatus === 'completed'), // Preserve uploaded status
-          uploadedAt: existingVideo.uploadedAt || (uploadStatus === 'completed' ? new Date().toISOString() : null),
-          flaggedForUpload: existingVideo.flaggedForUpload || flaggedForUpload,
-          s3Key: existingVideo.s3Key, // Keep S3 key if exists
-        };
-        console.log('📝 Updated existing video - Upload status preserved:', videos[existingVideoIndex].uploaded);
-      } else {
-        // Add new video to the list
-        const newVideo = {
-          id: Date.now().toString(),
-          uri: videoUri,
-          mode: 'saved', // Mark as locally saved
-          createdAt: new Date().toISOString(),
-          flaggedForUpload: flaggedForUpload, // Current flag status
-          uploaded: uploadStatus === 'completed', // TRUE if already uploaded to AWS
-          uploadedAt: uploadStatus === 'completed' ? new Date().toISOString() : null,
-          title: 'Saved Video',
-          duration: videoMetadata?.duration || 0,
-          fileSize: 0,
-        };
-        videos.unshift(newVideo);
-        console.log('📝 Added new video - Uploaded:', newVideo.uploaded);
-      }
-      
-      // Save to AsyncStorage (local only)
-      await AsyncStorage.setItem('saved_videos', JSON.stringify(videos));
-      console.log("✅ Video saved to local storage successfully");
-      
-      // Show success message with upload status
-      const uploadInfo = uploadStatus === 'completed' 
-        ? '\n✅ Video is uploaded to AWS S3' 
-        : '\n\nTip: Use the cloud icon to upload to AWS S3.';
-      
-      Alert.alert(
-        'Success',
-        `Video saved successfully!${uploadInfo}`,
-        [{ text: 'OK' }]
-      );
-
-    } catch (error: any) {
-      console.error("❌ Video save failed:", error);
-      Alert.alert(
-        'Save Failed',
-        `Failed to save video: ${error.message || 'Unknown error'}`,
-        [{ text: 'OK' }]
-      );
-      setIsUploaded(false);
-    }
-  };
+  
 
   const handleDiscard = () => {
     setShowDiscardModal(true);
@@ -1250,10 +1124,7 @@ const PreviewVideoShoot = () => {
     setIsDiscardConfirmed(true);
   };
 
-  const handleModalClose = () => {
-    setShowSuccessModal(false);
-    router.replace("/");
-  };
+  
 
   const handleDiscardModalClose = () => {
     setShowDiscardModal(false);
@@ -2367,25 +2238,7 @@ const PreviewVideoShoot = () => {
     }
   };
 
-  const getStatusColor = () => {
-    switch (uploadStatus) {
-      case 'pending': return '#ffa500';
-      case 'uploading': return '#259B9A';
-      case 'completed': return '#4CAF50';
-      case 'failed': return '#F44336';
-      default: return '#767577';
-    }
-  };
-
-  const getStatusText = () => {
-    switch (uploadStatus) {
-      case 'pending': return 'Pending';
-      case 'uploading': return 'Uploading...';
-      case 'completed': return 'Completed';
-      case 'failed': return 'Failed';
-      default: return 'Unknown';
-    }
-  };
+  
 
   // iOS-specific: Show loading if videoUri is not yet available but we're waiting for route params
   const isWaitingForVideoUri = isIOS && !videoUri && isLoadingVideo;
@@ -2405,7 +2258,7 @@ const PreviewVideoShoot = () => {
           </View>
         ) : (
           <>
-          {!isUploaded && !(showDiscardModal && isDiscardConfirmed) ? (
+          {!(showDiscardModal && isDiscardConfirmed) ? (
             <View style={styles.container}>
             {/* Header */}
           <View style={[
@@ -2418,21 +2271,23 @@ const PreviewVideoShoot = () => {
             <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
               <MaterialIcons name="arrow-back" size={Platform.OS === 'ios' ? getResponsiveFontSize(22, { minSize: 20, maxSize: 26 }) : 24} color="white" />
             </TouchableOpacity>
-            <Text style={styles.headerTitle}>Preview</Text>
+            <Text style={styles.headerTitle}>Edit Video</Text>
             
             {/* Header Action Icons */}
             <View style={styles.headerActions}>
-              {/* AWS Upload Icon */}
-              {flaggedForUpload && uploadStatus === 'pending' && (
-                <TouchableOpacity style={styles.headerIcon} onPress={() => setShowUploadToaster(true)}>
-                  <MaterialIcons name="cloud-upload" size={Platform.OS === 'ios' ? getResponsiveFontSize(22, { minSize: 20, maxSize: 26 }) : 24} color="#259B9A" />
+              
+              
+              {/* Next: Preview edited video */}
+              {videoUri && (
+                <TouchableOpacity
+                  style={styles.headerIcon}
+                  onPress={() => router.push({ pathname: '/screens/Preview', params: { videoUri } })}
+                >
+                  <MaterialIcons name="check" size={Platform.OS === 'ios' ? getResponsiveFontSize(22, { minSize: 20, maxSize: 26 }) : 24} color="#4CAF50" />
                 </TouchableOpacity>
               )}
+
               
-              {/* Save Video Icon */}
-              <TouchableOpacity style={styles.headerIcon} onPress={handleApprove}>
-                <MaterialIcons name="save" size={Platform.OS === 'ios' ? getResponsiveFontSize(22, { minSize: 20, maxSize: 26 }) : 24} color="#259B9A" />
-              </TouchableOpacity>
             </View>
             
             <View style={styles.headerLine} />
@@ -2896,44 +2751,10 @@ const PreviewVideoShoot = () => {
             />
           </ScrollView>
         </View>
-      ) : isUploaded ? (
-        <View style={[styles.videoView, { backgroundColor: "black" }]}>
-          <LottieView
-            autoPlay
-            loop={false}
-            style={styles.lottie}
-            source={require("../../assets/lottie/guXmTJWvVE.json")}
-            onAnimationFinish={() => {
-              setShowSuccessModal(true);
-            }}
-          />
-        </View>
       ) : null}
           </>
         )}
-      <Modal
-        animationType="fade"
-        transparent={true}
-        visible={showSuccessModal}
-        onRequestClose={handleModalClose}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalText}>
-              Your video is successfully saved to:
-            </Text>
-            <Text style={styles.modalUrl}>
-              {lastUploadedUrl || 'Upload complete. Verify in your AWS S3 bucket.'}
-            </Text>
-            <TouchableOpacity
-              style={[styles.YesNoButton, { backgroundColor: "#4CAF50" }]}
-              onPress={handleModalClose}
-            >
-              <Text style={styles.buttonText}>OK</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+      
       <Modal
         animationType="fade"
         transparent={true}
@@ -2979,18 +2800,7 @@ const PreviewVideoShoot = () => {
         </View>
       </Modal>
 
-      <AwsUploadToaster
-        visible={showUploadToaster}
-        onClose={() => setShowUploadToaster(false)}
-        styles={styles}
-        config={config}
-        flaggedForUpload={flaggedForUpload}
-        toggleUploadFlag={toggleUploadFlag}
-        uploadStatus={uploadStatus}
-        uploadProgress={uploadProgress}
-        performAwsUpload={performAwsUpload}
-        handleFeatureToggle={(feature, value) => handleFeatureToggle(feature as any, value)}
-      />
+      
 
 
       {/* Video Editor Modal */}
@@ -3184,4 +2994,4 @@ const PreviewVideoShoot = () => {
   );
 };
 
-export default PreviewVideoShoot;
+export default EditVideo;

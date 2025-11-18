@@ -865,10 +865,10 @@ const VideoShoot = () => {
               <TouchableOpacity
                 style={styles.sideButton}
                 onPress={() => {
-                  // OK/Done functionality - navigate to preview if video exists
+                  // OK/Done functionality - navigate to edit screen if video exists
                   if (recordedUri) {
                     router.replace({
-                      pathname: "/screens/PreviewVideoShoot",
+                      pathname: "/screens/EditVideo",
                       params: { videoUri: recordedUri, orientation: cameraAspectRatio },
                     });
                   } else {
