@@ -6,6 +6,7 @@ import { ScriptProvider } from '../contexts/ScriptContext';
 import { VolumeProvider } from '../contexts/VolumeContext';
 // Import polyfills for AWS SDK compatibility
 import '../utils/polyfills';
+import React from 'react';
 
 export default function RootLayout() {
   const [loaded] = useFonts({
@@ -29,12 +30,22 @@ export default function RootLayout() {
               headerTitleAlign: 'center',
             }}
           />
-           <Stack.Screen
-            name="screens/PreviewVideoShoot"
+          <Stack.Screen
+            name="screens/EditVideo"
             options={{
               headerShown: false,
               presentation: 'card',
               animation: 'slide_from_right',
+              title: 'Edit Video',
+            }}
+          />
+          <Stack.Screen
+            name="screens/Preview"
+            options={{
+              headerShown: false,
+              presentation: 'card',
+              animation: 'slide_from_right',
+              title: 'Preview',
             }}
           />
           <Stack.Screen name="+not-found" />

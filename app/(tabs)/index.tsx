@@ -166,9 +166,9 @@ const HomeScreen = () => {
 
               if (!result.canceled && result.assets[0]) {
                 const videoUri = result.assets[0].uri;
-                // Navigate to PreviewVideoShoot with the selected video
+                // Navigate to EditVideo with the selected video
                 router.push({
-                  pathname: '/screens/PreviewVideoShoot',
+                  pathname: '/screens/EditVideo',
                   params: { 
                     videoUri: videoUri,
                     orientation: 'portrait'

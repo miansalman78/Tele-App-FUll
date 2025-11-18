@@ -142,7 +142,7 @@ const MyVideosScreen = () => {
   const handlePlayVideo = (video: VideoItem) => {
     if (video.uri) {
       router.push({
-        pathname: '/screens/PreviewVideoShoot',
+        pathname: '/screens/EditVideo',
         params: { videoUri: video.uri, orientation: 'portrait' },
       });
     } else {
